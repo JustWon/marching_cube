@@ -38,7 +38,7 @@
 #include <string.h>
 #include <map>
 #include "device_launch_parameters.h"
-
+#include <iomanip>
 
 #if 0
 
@@ -3264,7 +3264,7 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 	cu_voxel	local_volume; local_volume.data = NULL;
 	//cu_voxel_run_length_decode( &volume, file_input, make_int3(0,0,0), make_int3(0,0,0), make_int3(0,0,0) );
 
-
+	
 	//---------------------------------------------------------------------------------------------------------
 	//modify this value
 	local_volume.grid_s = 0.003;
@@ -3274,12 +3274,15 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 	local_volume.size_xy = local_volume.size.x * local_volume.size.y;
 	local_volume.data = new cu_voxel_t[local_volume.size.x*local_volume.size.y*local_volume.size.z];
 	//----------------------------------------------------------------------------------------------------------
+
+	
 	volume.grid_s = local_volume.grid_s;
 	volume.size.x = local_volume.size.x;
 	volume.size.y = local_volume.size.y;
 	volume.size.z = local_volume.size.z;
 	volume.size_xy = local_volume.size_xy;
 	checkCudaErrors(cudaMalloc( &volume.data, volume.size_xy * volume.size.z * sizeof(cu_voxel_t) )); 
+	
 	
 	//----------------------------------------------------------------------------------------------------------------
 	// file open
@@ -3291,65 +3294,70 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 		printf("fail to open %s",file_input);
 		return;
 	}
-	
-	char data[256];
-
-	//skip first data
-	ifs.getline(data,256);
 
 	int x_count = 0;
 	int y_count = 0;
 	int z_count = 0;
 	int sdf = 0;
+	int weight = 0;
 
-	int valid_count = 0;
-	
-	while(ifs.eof() == false )
+	/*
+	for (register int xc = 0; xc < volume_dim; xc++)
 	{
-		ifs.getline(data,256);
-		int token_id = 0;
-		char* token;
-		token = strtok(data," ");	//split data using space bar
-		while(token!= NULL)
+		for (register int yc = 0; yc < volume_dim; yc++)
 		{
-			if( token_id == 0 )
-			{
-				x_count = atoi(token);
-				token_id++;
-			}
-			else if (token_id == 1 )
-			{
-				y_count = atoi(token);
-				token_id++;
-			}
-			else if (token_id == 2 )
-			{
-				z_count = atoi(token);
-				token_id++;
-			}
-			else if (token_id == 3 )
-			{
-				sdf = atoi(token);
-				
-				token_id++;
-			}
-			else if ( token_id == 4 )
-			{
-				local_volume.data[z_count * volume.size_xy + y_count * volume.size.x + x_count].w = atoi(token);
-				local_volume.data[z_count * volume.size_xy + y_count * volume.size.x + x_count].tsdf = sdf;
-			}
+			for (register int zc = 0; zc < volume_dim; zc++)
+			{				
+				ifs >> x_count >> y_count >> z_count >> sdf >> weight;
 
-			if(token_id!=4)
-			{
-				token = strtok(NULL, " ");
-			}
-			else
-			{
-				token = strtok(NULL, "\n");
+				local_volume.data[zc * volume.size_xy + yc * volume.size.x + xc].w = weight;
+				local_volume.data[zc * volume.size_xy + yc * volume.size.x + xc].tsdf = sdf;
 			}
 		}
-		
+	}*/
+
+	int xs = 512, ys = 512, zs = 0;
+
+	int xi = 0, yi = 0, zi = 0;
+	int whole_cnt = 0;
+	ifs.seekg(-11000000000, std::ios::end); 
+	char temp[256];  ifs.getline(temp, 256);
+	while (ifs.eof() == false)
+	{
+		ifs >> x_count >> y_count >> z_count >> sdf >> weight;
+		//printf("%d %d %d %d %d\n", x_count, y_count, z_count, sdf, weight);
+
+		if (xs <= x_count && x_count < xs + volume_dim &&
+			ys <= y_count && y_count < ys + volume_dim &&
+			zs <= z_count && z_count < zs + volume_dim)
+		{
+			local_volume.data[zi * volume.size_xy + yi * volume.size.x + xi].w = weight;
+			local_volume.data[zi * volume.size_xy + yi * volume.size.x + xi].tsdf = sdf;
+
+			// counting procedure
+			zi++;
+			if (zi >= volume_dim)
+			{
+				zi = 0;
+				yi++;
+			}
+			if (yi >= volume_dim)
+			{
+				printf("xi, yi, zi = %d, %d, %d\n", xi, yi, zi);
+				yi = 0;
+				xi++;
+			}
+			if (xi >= volume_dim)
+			{
+				break;
+			}
+		}
+
+		//if (whole_cnt++ % 1000000 == 0)
+		//	printf("x_count, y_count, z_count = %d, %d, %d\n", x_count, y_count, z_count);
 	}
+
+
 	checkCudaErrors(cudaMemcpy(volume.data, local_volume.data, volume.size_xy*volume.size.z * sizeof(cu_voxel_t),cudaMemcpyHostToDevice));
 	
 	nw_cui_message_s( "cu_voxel_rlc_to_mesh - generating triangles..." );
@@ -3357,7 +3365,7 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 	cu_array<vertex_voxel> triangles_buffer; // If a memory error returns, adjust DEFAULT_TRIANGLES_BUFFER_SIZE!
 	cu_array<int3> vertexindex_to_voxel;
 	cu_array<short> ver_voxel;
-	cu_array<vertex_voxel> triangles_device = mc.run(volume, triangles_buffer, vertexindex_to_voxel, ver_voxel/*inyeop*/);
+	cu_array<vertex_voxel> triangles_device = mc.run(volume, triangles_buffer, vertexindex_to_voxel, ver_voxel);
 	nw_cui_message_e( "done" );
 	nw_cui_message( "cu_voxel_rlc_to_mesh - # of triangles = %d", triangles_device.size()/3 );
 
@@ -3382,7 +3390,8 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 	short* h_ver_voxel = alloc_x(short, ver_voxel.size());
 	ver_voxel.download(h_ver_voxel);
 	
-  char *ext_ = strrchr(file_output,'.');
+
+	char *ext_ = strrchr(file_output,'.');
 	if( strcmp( ext_, ".ply" ) == 0 ) {
 		// write to ply file
 		nw_cui_message_s( "cu_voxel_rlc_to_mesh - write to a ply file..." );
@@ -3413,23 +3422,8 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 		fclose( fp );
 		nw_cui_message_e( "done" );
 	}
-	else if( strcmp( ext_, ".obj" ) == 0 ) {
-		// write to obj file
-		nw_cui_message_s( "cu_voxel_rlc_to_mesh - write to an obj file..." );
-		FILE *fp = fopen( file_output, "w" );
-		for( int i=0; i<triangles_device.size(); i++ ) {
-			fprintf( fp, "v %f %f %f\n", h_vertices[i].ver_pos.x, h_vertices[i].ver_pos.y, h_vertices[i].ver_pos.z );
-			fprintf( fp, "vn %f %f %f\n", h_normals[i].x, h_normals[i].y, h_normals[i].z );
-		}
-		for( int i=0; i<triangles_device.size()/3; i++ ) {
-			fprintf( fp, "f %d %d %d\n", i*3+1, i*3+2, i*3+3 );
-		}
-		fclose( fp );
-		nw_cui_message_e( "done" );
-	}
-	else {
-		nw_cui_error( "cu_voxel_rlc_to_mesh - Invalid file extension (%s)", ext_ );
-	}
+
+
 	if ( h_vertices != NULL)
 	{
 		free( h_vertices );
@@ -3438,7 +3432,6 @@ void cu_voxel_rlc_to_mesh( char *file_input, char *file_output, int volume_dim)
 	{
 		free( h_normals );
 	}
-	
 }
 
 /*__global__ void AssignVolume(short2* fromhostData, cu_voxel_t* todevData, int numElements)

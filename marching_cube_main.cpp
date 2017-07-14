@@ -5,7 +5,7 @@
 int main()
 {
 	//cu_voxel_rlc_to_mesh("512dim.vol","512dim.ply", 512);
-	cu_voxel_rlc_to_mesh("1024dim.vol", "1024dim.ply", 1024);
+	cu_voxel_rlc_to_mesh("1024dim.vol", "1024dim.ply", 512);
 
 	return 0;
 }
